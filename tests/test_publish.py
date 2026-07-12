@@ -69,6 +69,23 @@ class PublishDryRunTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn(".mpk", result.stdout)
 
+    def test_warns_when_mpk_path_omitted_and_targeting_mpos(self):
+        # Default badges is "mpos_api_0", the one platform confirmed to need
+        # a .mpk/.zip among the uploaded files to be installable at all.
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("mpos_api_0", result.stderr)
+
+    def test_no_warning_when_not_targeting_mpos(self):
+        result = self._run({"BADGEHUB_BADGES": "why2025"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("mpos_api_0", result.stderr)
+
+    def test_no_warning_when_mpk_path_given(self):
+        result = self._run({"BADGEHUB_MPK_PATH": FIXTURE_MPK})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Warning", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

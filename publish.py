@@ -194,6 +194,7 @@ def main():
         upload_file(full_path, rel_path)
 
     mpk_path = os.environ.get("BADGEHUB_MPK_PATH", "")
+    badges = [b.strip() for b in os.environ.get("BADGEHUB_BADGES", "mpos_api_0").split(",") if b.strip()]
     if mpk_path:
         # The on-device AppManager doesn't get a .mpk from BadgeHub for
         # free -- it installs by scanning the project's uploaded files for
@@ -203,6 +204,19 @@ def main():
         mpk_name = os.path.basename(mpk_path)
         local_paths.add(mpk_name)
         upload_file(mpk_path, mpk_name)
+    elif "mpos_api_0" in badges:
+        # Only warn for MicroPythonOS specifically -- that's the one
+        # platform we've actually confirmed needs a .mpk/.zip among the
+        # uploaded files to be installable at all. Other badges' AppManager
+        # equivalents may work completely differently; no basis to warn
+        # generically across project_type == "app" for all of them.
+        print(
+            "Warning: no mpk-path given but 'mpos_api_0' is a target badge -- "
+            "MicroPythonOS's AppManager installs by finding a .mpk/.zip among "
+            "this project's uploaded files, so nothing will be installable on "
+            "that platform without one.",
+            file=sys.stderr,
+        )
 
     print("Checking for stale draft files...")
     # "metadata.json" isn't a real file we ship -- BadgeHub creates/maintains
