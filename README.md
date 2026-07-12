@@ -17,12 +17,19 @@ MicroPythonOS app layout (a folder with `MANIFEST.JSON`, an entrypoint
 ## Usage
 
 ```yaml
+- name: Build .mpk
+  id: build
+  uses: tjorim/mpos-package-mpk@v1
+  with:
+    app-dir: path/to/your_app
+
 - name: Publish to BadgeHub
   uses: tjorim/mpos-badgehub-publish@v1
   with:
     slug: your-project-slug
     api-token: ${{ secrets.BADGEHUB_API_TOKEN }}
     app-dir: path/to/your_app
+    mpk-path: ${{ steps.build.outputs.mpk-path }}
     categories: Game
 ```
 
@@ -30,7 +37,24 @@ MicroPythonOS app layout (a folder with `MANIFEST.JSON`, an entrypoint
 entrypoint are all read from `app-dir/MANIFEST.JSON` automatically -- there
 is exactly one place those live. Only BadgeHub-specific fields that have no
 `MANIFEST.JSON` equivalent are action inputs; see `action.yml` for the full
-list (`categories`, `badges`, `license-type`, `git-url`, `icon`, `api-base`).
+list (`categories`, `badges`, `license-type`, `git-url`, `icon`, `api-base`,
+`mpk-path`).
+
+### Why `mpk-path`
+
+BadgeHub doesn't bundle a `.mpk` for you server-side. The on-device
+AppManager installs an app by scanning the project's uploaded files for
+one with a `.mpk`/`.zip` extension and downloading *that specific file*
+(`appstore_core.py`'s `_find_download_file`) -- there's no other mechanism.
+Without `mpk-path`, this action uploads your app's source tree individually
+(useful for BadgeHub's own code-preview UI) but nothing is actually
+installable on a badge. This action doesn't build the `.mpk` itself --
+that's [tjorim/mpos-package-mpk](https://github.com/tjorim/mpos-package-mpk)'s
+job, run as an earlier step in the same job; `mpk-path` just takes its
+output and uploads it as one more draft file, superseding old versions
+automatically via the stale-file cleanup below (the filename is
+version-qualified, so an old `.mpk` just stops matching a current local
+path on the next publish).
 
 Set `dry-run: true` to log the planned uploads/metadata/publish calls
 without making any network requests -- useful for verifying the file list
@@ -67,8 +91,13 @@ macOS, and Windows runners. Run locally with:
 python -m unittest discover tests
 ```
 
-Live end-to-end testing (an actual upload/publish against a real project)
-still hasn't been done -- see the field-name note below.
+Live end-to-end testing has partially happened: file upload, stale-file
+cleanup, and metadata all confirmed working against a real project
+(`tjorim/bomberboy-mpos`'s `bomberboy` slug). Two real bugs were found and
+fixed this way that dry-run testing structurally cannot catch (neither
+makes a real network call): a Cloudflare 403 on Python's default
+User-Agent, and a 404 on any file inside a subdirectory (both below). The
+final `publish` call itself is still not confirmed working end-to-end.
 
 ## Field name for file uploads
 
@@ -79,6 +108,24 @@ contract, so their OpenAPI generator has nothing to describe it from (filed
 as [BadgeHubCrew/badgehub-app#7](https://github.com/BadgeHubCrew/badgehub-app/issues/7)).
 `publish.py` sends it as `file`, confirmed directly against BadgeHub's own
 frontend (`formData.append("file", file)`) and backend
-(`upload.single("file")`) source -- not a guess. The upload code path
-itself hasn't been exercised against a live project end-to-end yet, though;
-if it ever rejects an upload, this is still the first thing to check.
+(`upload.single("file")`) source, and since confirmed again in practice --
+13+ real file uploads have succeeded against a live project.
+
+## Cloudflare blocks Python's default User-Agent
+
+badgehub.eu sits behind Cloudflare, which 403s (error code 1010) any
+request carrying Python's default `Python-urllib/3.x` User-Agent, or none
+at all -- found when the first real (non-dry-run) publish attempt failed
+on the pre-flight `/ping` check with no other explanation. Any non-default
+value clears it; this isn't spoofing a browser, just identifying the
+client honestly. `publish.py` sends `User-Agent: mpos-badgehub-publish` on
+every request.
+
+## Subdirectory files need percent-encoding
+
+BadgeHub's `{filePath}` route is a single Express path segment, so a raw
+`/` from a file inside a subdirectory (e.g. `sounds/BombDrop.wav`) splits
+the URL into an extra, unmatched segment -- 404 "Cannot POST". Found when
+the first real publish uploaded 13 flat files successfully, then hit this
+on the first subdirectory file. `quote_path()` percent-encodes the whole
+relative path as one opaque token before building the URL.

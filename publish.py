@@ -22,6 +22,7 @@ import json
 import mimetypes
 import os
 import sys
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -173,10 +174,7 @@ def main():
 
     previous_revision = get_latest_revision(api_base, slug)
 
-    local_paths = set()
-    print(f"Uploading files from '{app_dir}' to BadgeHub project '{slug}'...")
-    for full_path, rel_path in iter_app_files(app_dir):
-        local_paths.add(rel_path)
+    def upload_file(full_path, rel_path):
         with open(full_path, "rb") as handle:
             content = handle.read()
         status, body = request(
@@ -188,6 +186,23 @@ def main():
         if status != 204:
             fail(f"Failed to upload {rel_path}", status, body)
         print(f"  uploaded {rel_path}")
+
+    local_paths = set()
+    print(f"Uploading files from '{app_dir}' to BadgeHub project '{slug}'...")
+    for full_path, rel_path in iter_app_files(app_dir):
+        local_paths.add(rel_path)
+        upload_file(full_path, rel_path)
+
+    mpk_path = os.environ.get("BADGEHUB_MPK_PATH", "")
+    if mpk_path:
+        # The on-device AppManager doesn't get a .mpk from BadgeHub for
+        # free -- it installs by scanning the project's uploaded files for
+        # one with a .mpk/.zip extension and downloading that specific
+        # file (see appstore_core.py's _find_download_file). Without this,
+        # nothing is actually installable even after a successful publish.
+        mpk_name = os.path.basename(mpk_path)
+        local_paths.add(mpk_name)
+        upload_file(mpk_path, mpk_name)
 
     print("Checking for stale draft files...")
     # "metadata.json" isn't a real file we ship -- BadgeHub creates/maintains
@@ -233,4 +248,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        # request() only catches urllib.error.HTTPError -- anything else
+        # (URLError, a connection reset, etc.) would otherwise propagate as
+        # a bare, traceback-free "exit code 1" with zero diagnostic info,
+        # exactly what happened on the v0.1.2 publish attempt.
+        traceback.print_exc()
+        sys.exit(1)

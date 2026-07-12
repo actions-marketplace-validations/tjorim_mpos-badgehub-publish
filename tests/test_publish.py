@@ -5,6 +5,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURE = os.path.join(ROOT, "tests", "fixture-app")
+FIXTURE_MPK = os.path.join(ROOT, "tests", "fixture-app.mpk")
 SCRIPT = os.path.join(ROOT, "publish.py")
 
 sys.path.insert(0, ROOT)
@@ -56,6 +57,17 @@ class PublishDryRunTests(unittest.TestCase):
         # so this only passes if dry-run truly never attempts one.
         result = self._run({"BADGEHUB_API_BASE": "https://this-host-does-not-exist.invalid/api/v3"})
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_mpk_path_is_uploaded_when_given(self):
+        result = self._run({"BADGEHUB_MPK_PATH": FIXTURE_MPK})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("uploaded fixture-app.mpk", result.stdout)
+        self.assertIn("draft/files/fixture-app.mpk", result.stdout)
+
+    def test_mpk_path_is_not_uploaded_when_omitted(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn(".mpk", result.stdout)
 
 
 if __name__ == "__main__":

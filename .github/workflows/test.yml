@@ -28,4 +28,5 @@ jobs:
           slug: fixture-app
           api-token: fake-token-for-dry-run
           app-dir: tests/fixture-app
+          mpk-path: tests/fixture-app.mpk
           dry-run: true

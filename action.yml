@@ -13,6 +13,17 @@ inputs:
   app-dir:
     description: 'Path to the app folder containing MANIFEST.JSON'
     required: true
+  mpk-path:
+    description: >
+      Path to a pre-built .mpk (e.g. the "mpk-path" output of
+      tjorim/mpos-package-mpk, run as an earlier step in the same job).
+      Uploaded as one more draft file alongside app-dir's source tree. The
+      on-device AppManager needs this: it installs by scanning the
+      project's uploaded files for one with a .mpk/.zip extension and
+      downloading that specific file -- BadgeHub doesn't bundle one for
+      you. Omit only if you're managing the .mpk upload some other way.
+    required: false
+    default: ''
   categories:
     description: 'Comma-separated BadgeHub categories, e.g. "Game"'
     required: false
@@ -58,6 +69,7 @@ runs:
         BADGEHUB_SLUG: ${{ inputs.slug }}
         BADGEHUB_API_TOKEN: ${{ inputs.api-token }}
         BADGEHUB_APP_DIR: ${{ inputs.app-dir }}
+        BADGEHUB_MPK_PATH: ${{ inputs.mpk-path }}
         BADGEHUB_CATEGORIES: ${{ inputs.categories }}
         BADGEHUB_BADGES: ${{ inputs.badges }}
         BADGEHUB_LICENSE_TYPE: ${{ inputs.license-type }}
