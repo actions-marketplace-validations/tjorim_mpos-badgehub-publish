@@ -23,6 +23,7 @@ import mimetypes
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 
@@ -62,6 +63,16 @@ def request(method, url, token, json_body=None, multipart_file=None):
             return resp.status, resp.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
+
+
+def quote_path(rel_path):
+    # BadgeHub's {filePath} route param is a single Express path segment, so
+    # a raw "/" from a subdirectory (e.g. sounds/BombDrop.wav) splits the URL
+    # into an extra, unmatched segment -- a plain f-string embed 404s with
+    # "Cannot POST". Percent-encoding the whole relative path as one opaque
+    # token (matching how a client library like their own ts-rest one would
+    # build such a URL) keeps it a single segment for routing purposes.
+    return urllib.parse.quote(rel_path, safe="")
 
 
 def iter_app_files(app_dir):
@@ -170,7 +181,7 @@ def main():
             content = handle.read()
         status, body = request(
             "POST",
-            f"{api_base}/projects/{slug}/draft/files/{rel_path}",
+            f"{api_base}/projects/{slug}/draft/files/{quote_path(rel_path)}",
             token,
             multipart_file=(os.path.basename(rel_path), content),
         )
@@ -185,7 +196,9 @@ def main():
     # would delete it right before immediately recreating it.
     draft_paths = get_draft_file_paths(api_base, slug, token)
     for stale in sorted(draft_paths - local_paths - {"metadata.json"}):
-        status, body = request("DELETE", f"{api_base}/projects/{slug}/draft/files/{stale}", token)
+        status, body = request(
+            "DELETE", f"{api_base}/projects/{slug}/draft/files/{quote_path(stale)}", token
+        )
         if status != 204:
             fail(f"Failed to delete stale draft file {stale}", status, body)
         print(f"  removed stale {stale}")

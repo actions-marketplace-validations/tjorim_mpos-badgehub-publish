@@ -7,6 +7,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURE = os.path.join(ROOT, "tests", "fixture-app")
 SCRIPT = os.path.join(ROOT, "publish.py")
 
+sys.path.insert(0, ROOT)
+import publish  # noqa: E402
+
+
+class QuotePathTests(unittest.TestCase):
+    def test_subdirectory_slash_is_percent_encoded(self):
+        # A raw "/" in the URL splits BadgeHub's single-segment {filePath}
+        # route param into an extra unmatched segment (404 "Cannot POST") --
+        # this is what actually broke the first real (non-dry-run) publish.
+        self.assertEqual(publish.quote_path("sounds/BombDrop.wav"), "sounds%2FBombDrop.wav")
+
+    def test_flat_filename_is_unchanged(self):
+        self.assertEqual(publish.quote_path("MANIFEST.JSON"), "MANIFEST.JSON")
+
 
 class PublishDryRunTests(unittest.TestCase):
     def _run(self, extra_env=None):
@@ -30,6 +44,12 @@ class PublishDryRunTests(unittest.TestCase):
         self.assertIn("MANIFEST.JSON", result.stdout)
         self.assertIn("fixture_app.py", result.stdout)
         self.assertIn("Published 'fixture-app'", result.stdout)
+
+    def test_dry_run_logs_subdirectory_files_percent_encoded(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("uploaded sounds/beep.txt", result.stdout)
+        self.assertIn("draft/files/sounds%2Fbeep.txt", result.stdout)
 
     def test_dry_run_never_touches_the_network(self):
         # An unresolvable host would fail immediately on any real request,
