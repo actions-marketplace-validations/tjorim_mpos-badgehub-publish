@@ -76,4 +76,4 @@ runs:
         BADGEHUB_GIT_URL: ${{ inputs.git-url }}
         BADGEHUB_ICON: ${{ inputs.icon }}
         BADGEHUB_DRY_RUN: ${{ inputs.dry-run }}
-      run: python3 "${{ github.action_path }}/publish.py"
+      run: python3 -u "${{ github.action_path }}/publish.py"

@@ -17,6 +17,11 @@ carrying Python's default `Python-urllib/3.x` User-Agent (or none at all)
 with Cloudflare error code 1010. Any non-default value clears it -- this
 isn't spoofing a browser, just identifying the client honestly instead of
 using urllib's default.
+
+Run as `python3 -u` (see action.yml) rather than adding flush=True to
+every print: stdout is block-buffered when piped to a CI log instead of a
+tty, so without -u, output (including a traceback right before a crash)
+can sit in the buffer and never reach the log at all.
 """
 import json
 import mimetypes
@@ -70,13 +75,13 @@ def request(method, url, token, json_body=None, multipart_file=None):
     except Exception as error:
         # Catch everything, not just HTTPError -- a connection reset, an
         # SSL error, or a bare timeout would otherwise propagate as a raw
-        # exception. Logged immediately with flush=True and full context
-        # (nothing else will have mentioned this URL, since the routine
-        # per-request logging was removed as noise once the actual bugs
-        # were found): a connection failure here is the one failure mode
-        # that left zero trace in the log historically, right when BadgeHub
-        # had actually already processed the request server-side.
-        print(f"  {method} {url} -> {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+        # exception. Full context (nothing else will have mentioned this
+        # URL, since the routine per-request logging was removed as noise
+        # once the actual bugs were found): a connection failure here is
+        # the one failure mode that left zero trace in the log
+        # historically, right when BadgeHub had actually already
+        # processed the request server-side.
+        print(f"  {method} {url} -> {type(error).__name__}: {error}", file=sys.stderr)
         return -1, str(error).encode()
 
 
@@ -137,7 +142,7 @@ def build_metadata(app_dir):
 
 
 def fail(message, status, body):
-    print(f"{message}: HTTP {status} {body!r}", file=sys.stderr, flush=True)
+    print(f"{message}: HTTP {status} {body!r}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -170,7 +175,7 @@ def get_latest_revision(api_base, slug):
     except urllib.error.HTTPError:
         return None
     except Exception as error:
-        print(f"  revision check failed: {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+        print(f"  revision check failed: {type(error).__name__}: {error}", file=sys.stderr)
         return None
 
 
@@ -187,7 +192,7 @@ def wait_for_revision_advance(api_base, slug, previous_revision):
         if new_revision is not None and (previous_revision is None or new_revision > previous_revision):
             return new_revision
         if attempt < len(delays):
-            print(f"  revision not advanced yet (attempt {attempt}), retrying in {delay}s...", flush=True)
+            print(f"  revision not advanced yet (attempt {attempt}), retrying in {delay}s...")
             time.sleep(delay)
     return new_revision
 
@@ -220,10 +225,10 @@ def main():
         )
         if status != 204:
             fail(f"Failed to upload {rel_path}", status, body)
-        print(f"  uploaded {rel_path}", flush=True)
+        print(f"  uploaded {rel_path}")
 
     local_paths = set()
-    print(f"Uploading files from '{app_dir}' to BadgeHub project '{slug}'...", flush=True)
+    print(f"Uploading files from '{app_dir}' to BadgeHub project '{slug}'...")
     for full_path, rel_path in iter_app_files(app_dir):
         local_paths.add(rel_path)
         upload_file(full_path, rel_path)
@@ -251,10 +256,9 @@ def main():
             "this project's uploaded files, so nothing will be installable on "
             "that platform without one.",
             file=sys.stderr,
-            flush=True,
         )
 
-    print("Checking for stale draft files...", flush=True)
+    print("Checking for stale draft files...")
     # "metadata.json" isn't a real file we ship -- BadgeHub creates/maintains
     # it itself as a side effect of the metadata PATCH call below, so it
     # never appears in local_paths and must be excluded here or every run
@@ -266,17 +270,17 @@ def main():
         )
         if status != 204:
             fail(f"Failed to delete stale draft file {stale}", status, body)
-        print(f"  removed stale {stale}", flush=True)
+        print(f"  removed stale {stale}")
 
     metadata = build_metadata(app_dir)
-    print("Setting draft metadata:", json.dumps(metadata, indent=2), flush=True)
+    print("Setting draft metadata:", json.dumps(metadata, indent=2))
     status, body = request(
         "PATCH", f"{api_base}/projects/{slug}/draft/metadata", token, json_body=metadata
     )
     if status != 204:
         fail("Failed to set metadata", status, body)
 
-    print("Publishing draft...", flush=True)
+    print("Publishing draft...")
     status, body = request("PATCH", f"{api_base}/projects/{slug}/publish", token)
     if status != 204:
         fail("Failed to publish", status, body)
@@ -292,9 +296,9 @@ def main():
                 "n/a",
                 b"",
             )
-        print(f"Confirmed: revision is now {new_revision} (was {previous_revision}).", flush=True)
+        print(f"Confirmed: revision is now {new_revision} (was {previous_revision}).")
 
-    print(f"Published '{slug}' version {metadata['version']} to BadgeHub.", flush=True)
+    print(f"Published '{slug}' version {metadata['version']} to BadgeHub.")
 
 
 if __name__ == "__main__":
