@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURE = os.path.join(ROOT, "tests", "fixture-app")
@@ -10,6 +11,50 @@ SCRIPT = os.path.join(ROOT, "publish.py")
 
 sys.path.insert(0, ROOT)
 import publish  # noqa: E402
+
+
+class WaitForRevisionAdvanceTests(unittest.TestCase):
+    # BadgeHub's publish endpoint returns 204 before its public
+    # revision-check endpoint necessarily reflects it (confirmed on the
+    # bomberboy v0.1.3/v0.1.4 releases) -- these mock get_latest_revision
+    # and time.sleep so the retry/backoff logic is verified without any
+    # real network calls or real delays.
+
+    @patch("publish.time.sleep")
+    @patch("publish.get_latest_revision")
+    def test_succeeds_immediately_when_already_advanced(self, mock_get, mock_sleep):
+        mock_get.return_value = 6
+        result = publish.wait_for_revision_advance("base", "slug", 5)
+        self.assertEqual(result, 6)
+        mock_sleep.assert_not_called()
+
+    @patch("publish.time.sleep")
+    @patch("publish.get_latest_revision")
+    def test_retries_until_it_advances(self, mock_get, mock_sleep):
+        mock_get.side_effect = [5, 5, 6]
+        result = publish.wait_for_revision_advance("base", "slug", 5)
+        self.assertEqual(result, 6)
+        self.assertEqual(mock_get.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("publish.time.sleep")
+    @patch("publish.get_latest_revision")
+    def test_gives_up_after_all_retries_exhausted(self, mock_get, mock_sleep):
+        mock_get.return_value = 5
+        result = publish.wait_for_revision_advance("base", "slug", 5)
+        self.assertEqual(result, 5)  # still the stale value, not None
+        self.assertEqual(mock_get.call_count, 5)
+        self.assertEqual(mock_sleep.call_count, 4)  # no sleep after the last attempt
+
+    @patch("publish.time.sleep")
+    @patch("publish.get_latest_revision")
+    def test_no_previous_revision_accepts_first_result(self, mock_get, mock_sleep):
+        # First-ever publish for a project: previous_revision is None, so
+        # any non-None result should be accepted immediately.
+        mock_get.return_value = 1
+        result = publish.wait_for_revision_advance("base", "slug", None)
+        self.assertEqual(result, 1)
+        mock_sleep.assert_not_called()
 
 
 class QuotePathTests(unittest.TestCase):

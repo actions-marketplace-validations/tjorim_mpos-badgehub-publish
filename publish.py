@@ -22,6 +22,7 @@ import json
 import mimetypes
 import os
 import sys
+import time
 import traceback
 import urllib.error
 import urllib.parse
@@ -177,6 +178,24 @@ def get_latest_revision(api_base, slug):
         return None
 
 
+def wait_for_revision_advance(api_base, slug, previous_revision):
+    # BadgeHub's publish endpoint returns 204 before the public
+    # revision-check endpoint necessarily reflects it -- confirmed on the
+    # v0.1.3 and v0.1.4 bomberboy releases, where publish had genuinely
+    # succeeded (verified independently afterwards) but an immediate check
+    # right after publish still saw the pre-publish revision.
+    delays = (1, 2, 3, 5, 5)
+    new_revision = None
+    for attempt, delay in enumerate(delays, start=1):
+        new_revision = get_latest_revision(api_base, slug)
+        if new_revision is not None and (previous_revision is None or new_revision > previous_revision):
+            return new_revision
+        if attempt < len(delays):
+            print(f"  revision not advanced yet (attempt {attempt}), retrying in {delay}s...", flush=True)
+            time.sleep(delay)
+    return new_revision
+
+
 def main():
     api_base = os.environ["BADGEHUB_API_BASE"].rstrip("/")
     slug = os.environ["BADGEHUB_SLUG"]
@@ -267,12 +286,12 @@ def main():
         fail("Failed to publish", status, body)
 
     if not DRY_RUN:
-        new_revision = get_latest_revision(api_base, slug)
+        new_revision = wait_for_revision_advance(api_base, slug, previous_revision)
         if new_revision is None:
             fail("Publish returned 204 but the revision check afterwards failed", "n/a", b"")
         if previous_revision is not None and new_revision <= previous_revision:
             fail(
-                f"Publish returned 204 but the revision did not advance "
+                f"Publish returned 204 but the revision did not advance after retrying "
                 f"(was {previous_revision}, still {new_revision})",
                 "n/a",
                 b"",
