@@ -1,0 +1,70 @@
+name: 'Publish to BadgeHub'
+description: >
+  Uploads a MicroPythonOS app directory to BadgeHub.eu and publishes it as a
+  new release. Reads name/description/version/entrypoint from the app's own
+  MANIFEST.JSON, so only BadgeHub-specific extras need to be supplied here.
+inputs:
+  slug:
+    description: 'BadgeHub project slug (create the project on badgehub.eu first)'
+    required: true
+  api-token:
+    description: >
+      BadgeHub project API token. Generate it once via "POST
+      /api/v3/projects/{slug}/token" while logged into badgehub.eu, then
+      store it as a repo secret -- pass that secret here.
+    required: true
+  app-dir:
+    description: 'Path to the app folder containing MANIFEST.JSON'
+    required: true
+  categories:
+    description: 'Comma-separated BadgeHub categories, e.g. "Game"'
+    required: false
+    default: ''
+  badges:
+    description: 'Comma-separated badge slugs this app targets'
+    required: false
+    default: 'mpos_api_0'
+  license-type:
+    description: 'Short license identifier, e.g. MIT'
+    required: false
+    default: ''
+  git-url:
+    description: 'Public git URL for the project'
+    required: false
+    default: ''
+  icon:
+    description: 'Icon filename inside app-dir to register as the 64x64 icon'
+    required: false
+    default: 'icon_64x64.png'
+  api-base:
+    description: 'BadgeHub API base URL (override for testing against a different instance)'
+    required: false
+    default: 'https://badgehub.eu/api/v3'
+  dry-run:
+    description: 'If true, log the planned API calls without making any network requests'
+    required: false
+    default: 'false'
+branding:
+  icon: 'upload-cloud'
+  color: 'green'
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Upload draft and publish
+      shell: bash
+      env:
+        BADGEHUB_API_BASE: ${{ inputs.api-base }}
+        BADGEHUB_SLUG: ${{ inputs.slug }}
+        BADGEHUB_API_TOKEN: ${{ inputs.api-token }}
+        BADGEHUB_APP_DIR: ${{ inputs.app-dir }}
+        BADGEHUB_CATEGORIES: ${{ inputs.categories }}
+        BADGEHUB_BADGES: ${{ inputs.badges }}
+        BADGEHUB_LICENSE_TYPE: ${{ inputs.license-type }}
+        BADGEHUB_GIT_URL: ${{ inputs.git-url }}
+        BADGEHUB_ICON: ${{ inputs.icon }}
+        BADGEHUB_DRY_RUN: ${{ inputs.dry-run }}
+      run: python3 "${{ github.action_path }}/publish.py"

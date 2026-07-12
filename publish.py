@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Publish a MicroPythonOS app directory to BadgeHub.eu (draft -> publish).
+
+Reads name/description/version/entrypoint from the app's own MANIFEST.JSON
+so callers only need to supply BadgeHub-specific extras. Talks to the
+BadgeHub v3 API (https://badgehub.eu/api-docs/swagger.json) using only the
+standard library, so the composite action needs no extra pip installs.
+
+Field-name note: the published swagger spec doesn't document the multipart
+field name for file uploads (it's wired via `multer.single("file")` outside
+BadgeHub's typed contract, invisible to their OpenAPI generator -- see
+BadgeHubCrew/badgehub-app#7). Confirmed directly against BadgeHub's own
+frontend (`formData.append("file", file)`) and backend source, not guessed.
+"""
+import json
+import mimetypes
+import os
+import sys
+import urllib.error
+import urllib.request
+import uuid
+
+DRY_RUN = os.environ.get("BADGEHUB_DRY_RUN", "").lower() in ("1", "true", "yes")
+
+
+def request(method, url, token, json_body=None, multipart_file=None):
+    if DRY_RUN:
+        print(f"  [dry-run] {method} {url}")
+        return 204, b""
+
+    headers = {"badgehub-api-token": token}
+    data = None
+    if json_body is not None:
+        data = json.dumps(json_body).encode()
+        headers["Content-Type"] = "application/json"
+    elif multipart_file is not None:
+        file_name, content = multipart_file
+        boundary = uuid.uuid4().hex
+        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        mimetype = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+        body = b"".join(
+            [
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="file"; filename="{file_name}"\r\n'.encode(),
+                f"Content-Type: {mimetype}\r\n\r\n".encode(),
+                content,
+                f"\r\n--{boundary}--\r\n".encode(),
+            ]
+        )
+        data = body
+
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+
+
+def iter_app_files(app_dir):
+    for root, dirs, files in os.walk(app_dir):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        for name in sorted(files):
+            if name.endswith(".pyc"):
+                continue
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, app_dir).replace(os.sep, "/")
+            yield full, rel
+
+
+def build_metadata(app_dir):
+    with open(os.path.join(app_dir, "MANIFEST.JSON")) as handle:
+        manifest = json.load(handle)
+    entrypoint = manifest["activities"][0]["entrypoint"]
+
+    metadata = {
+        "project_type": "app",
+        "name": manifest.get("name"),
+        "description": manifest.get("short_description", ""),
+        "long_description": manifest.get("long_description", ""),
+        "author": manifest.get("publisher", ""),
+        "version": manifest.get("version"),
+        "badges": [b.strip() for b in os.environ.get("BADGEHUB_BADGES", "mpos_api_0").split(",") if b.strip()],
+        "application": [{"type": "micropython", "executable": entrypoint}],
+    }
+
+    icon_name = os.environ.get("BADGEHUB_ICON", "icon_64x64.png")
+    if icon_name and os.path.exists(os.path.join(app_dir, icon_name)):
+        metadata["icon_map"] = {"64x64": icon_name}
+
+    categories = os.environ.get("BADGEHUB_CATEGORIES", "")
+    if categories:
+        metadata["categories"] = [c.strip() for c in categories.split(",") if c.strip()]
+
+    git_url = os.environ.get("BADGEHUB_GIT_URL", "")
+    if git_url:
+        metadata["git_url"] = git_url
+
+    license_type = os.environ.get("BADGEHUB_LICENSE_TYPE", "")
+    if license_type:
+        metadata["license_type"] = license_type
+
+    return metadata
+
+
+def fail(message, status, body):
+    print(f"{message}: HTTP {status} {body!r}", file=sys.stderr)
+    sys.exit(1)
+
+
+def get_draft_file_paths(api_base, slug, token):
+    if DRY_RUN:
+        print(f"  [dry-run] GET {api_base}/projects/{slug}/draft")
+        return set()
+    status, body = request("GET", f"{api_base}/projects/{slug}/draft", token)
+    if status != 200:
+        fail("Failed to fetch current draft file list", status, body)
+    data = json.loads(body)
+    return {f["full_path"] for f in data.get("version", {}).get("files", [])}
+
+
+def get_latest_revision(api_base, slug):
+    # Public, unauthenticated endpoint -- also used as a pre-flight
+    # reachability check and a post-publish sanity check, since a 204 from
+    # the publish call alone doesn't prove the new content actually landed.
+    if DRY_RUN:
+        print(f"  [dry-run] GET {api_base}/project-latest-revisions/{slug}")
+        return None
+    req = urllib.request.Request(f"{api_base}/project-latest-revisions/{slug}", method="GET")
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError:
+        return None
+
+
+def main():
+    api_base = os.environ["BADGEHUB_API_BASE"].rstrip("/")
+    slug = os.environ["BADGEHUB_SLUG"]
+    token = os.environ["BADGEHUB_API_TOKEN"]
+    app_dir = os.environ["BADGEHUB_APP_DIR"]
+
+    if not DRY_RUN:
+        ping = urllib.request.Request(f"{api_base}/ping", method="GET")
+        try:
+            urllib.request.urlopen(ping)
+        except (urllib.error.HTTPError, urllib.error.URLError) as error:
+            fail("BadgeHub API unreachable", "n/a", str(error).encode())
+
+    previous_revision = get_latest_revision(api_base, slug)
+
+    local_paths = set()
+    print(f"Uploading files from '{app_dir}' to BadgeHub project '{slug}'...")
+    for full_path, rel_path in iter_app_files(app_dir):
+        local_paths.add(rel_path)
+        with open(full_path, "rb") as handle:
+            content = handle.read()
+        status, body = request(
+            "POST",
+            f"{api_base}/projects/{slug}/draft/files/{rel_path}",
+            token,
+            multipart_file=(os.path.basename(rel_path), content),
+        )
+        if status != 204:
+            fail(f"Failed to upload {rel_path}", status, body)
+        print(f"  uploaded {rel_path}")
+
+    print("Checking for stale draft files...")
+    # "metadata.json" isn't a real file we ship -- BadgeHub creates/maintains
+    # it itself as a side effect of the metadata PATCH call below, so it
+    # never appears in local_paths and must be excluded here or every run
+    # would delete it right before immediately recreating it.
+    draft_paths = get_draft_file_paths(api_base, slug, token)
+    for stale in sorted(draft_paths - local_paths - {"metadata.json"}):
+        status, body = request("DELETE", f"{api_base}/projects/{slug}/draft/files/{stale}", token)
+        if status != 204:
+            fail(f"Failed to delete stale draft file {stale}", status, body)
+        print(f"  removed stale {stale}")
+
+    metadata = build_metadata(app_dir)
+    print("Setting draft metadata:", json.dumps(metadata, indent=2))
+    status, body = request(
+        "PATCH", f"{api_base}/projects/{slug}/draft/metadata", token, json_body=metadata
+    )
+    if status != 204:
+        fail("Failed to set metadata", status, body)
+
+    print("Publishing draft...")
+    status, body = request("PATCH", f"{api_base}/projects/{slug}/publish", token)
+    if status != 204:
+        fail("Failed to publish", status, body)
+
+    if not DRY_RUN:
+        new_revision = get_latest_revision(api_base, slug)
+        if new_revision is None:
+            fail("Publish returned 204 but the revision check afterwards failed", "n/a", b"")
+        if previous_revision is not None and new_revision <= previous_revision:
+            fail(
+                f"Publish returned 204 but the revision did not advance "
+                f"(was {previous_revision}, still {new_revision})",
+                "n/a",
+                b"",
+            )
+        print(f"Confirmed: revision is now {new_revision} (was {previous_revision}).")
+
+    print(f"Published '{slug}' version {metadata['version']} to BadgeHub.")
+
+
+if __name__ == "__main__":
+    main()
