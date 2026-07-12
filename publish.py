@@ -60,27 +60,23 @@ def request(method, url, token, json_body=None, multipart_file=None):
         data = body
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    print(f"  -> {method} {url}", file=sys.stderr, flush=True)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            body = resp.read()
-            print(f"  <- {resp.status}", file=sys.stderr, flush=True)
-            return resp.status, body
+            return resp.status, resp.read()
     except urllib.error.HTTPError as error:
-        body = error.read()
-        print(f"  <- {error.code} (HTTPError)", file=sys.stderr, flush=True)
-        return error.code, body
+        # Not logged here -- every caller already checks `if status != 204`
+        # and reports it via fail(), which prints the status/body itself.
+        return error.code, error.read()
     except Exception as error:
-        # Catch everything here, not just HTTPError -- a connection reset,
-        # an SSL error, or a bare timeout would otherwise propagate as an
-        # exception, and on the actual publish call one of these left zero
-        # trace in the log (not even the outer try/except's traceback:
-        # server-side evidence -- BadgeHub's own published_at timestamp --
-        # showed the request *had* succeeded, so whatever failed did so
-        # between getting the response and this function returning, and
-        # took the diagnostic output down with it). Logging immediately
-        # with flush=True, before any further code runs, is the point.
-        print(f"  <- {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+        # Catch everything, not just HTTPError -- a connection reset, an
+        # SSL error, or a bare timeout would otherwise propagate as a raw
+        # exception. Logged immediately with flush=True and full context
+        # (nothing else will have mentioned this URL, since the routine
+        # per-request logging was removed as noise once the actual bugs
+        # were found): a connection failure here is the one failure mode
+        # that left zero trace in the log historically, right when BadgeHub
+        # had actually already processed the request server-side.
+        print(f"  {method} {url} -> {type(error).__name__}: {error}", file=sys.stderr, flush=True)
         return -1, str(error).encode()
 
 
