@@ -54,6 +54,22 @@ current draft's file listing (`GET /projects/{slug}/draft`) against the
 local app folder and `DELETE`s anything no longer present, so a removed
 module doesn't linger in BadgeHub forever.
 
+## Testing
+
+`tests/` has unit tests for `publish.py` run in `BADGEHUB_DRY_RUN` mode
+against a `fixture-app/` -- no real BadgeHub project or token needed, and
+one test specifically asserts dry-run never makes a network call at all (by
+pointing at an unresolvable host and confirming that still succeeds). CI
+also dogfoods the composite action itself, in dry-run mode, on Linux,
+macOS, and Windows runners. Run locally with:
+
+```
+python -m unittest discover tests
+```
+
+Live end-to-end testing (an actual upload/publish against a real project)
+still hasn't been done -- see the field-name note below.
+
 ## Field name for file uploads
 
 The published swagger spec doesn't document the multipart field name for

@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run unit tests
+        run: python -m unittest discover tests
+
+      - name: Run via the action itself (dogfooding, dry-run)
+        uses: ./
+        with:
+          slug: fixture-app
+          api-token: fake-token-for-dry-run
+          app-dir: tests/fixture-app
+          dry-run: true
