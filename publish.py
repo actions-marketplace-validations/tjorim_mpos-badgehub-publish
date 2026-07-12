@@ -11,6 +11,12 @@ field name for file uploads (it's wired via `multer.single("file")` outside
 BadgeHub's typed contract, invisible to their OpenAPI generator -- see
 BadgeHubCrew/badgehub-app#7). Confirmed directly against BadgeHub's own
 frontend (`formData.append("file", file)`) and backend source, not guessed.
+
+User-Agent note: badgehub.eu sits behind Cloudflare, which 403s requests
+carrying Python's default `Python-urllib/3.x` User-Agent (or none at all)
+with Cloudflare error code 1010. Any non-default value clears it -- this
+isn't spoofing a browser, just identifying the client honestly instead of
+using urllib's default.
 """
 import json
 import mimetypes
@@ -21,6 +27,7 @@ import urllib.request
 import uuid
 
 DRY_RUN = os.environ.get("BADGEHUB_DRY_RUN", "").lower() in ("1", "true", "yes")
+USER_AGENT = "mpos-badgehub-publish"
 
 
 def request(method, url, token, json_body=None, multipart_file=None):
@@ -28,7 +35,7 @@ def request(method, url, token, json_body=None, multipart_file=None):
         print(f"  [dry-run] {method} {url}")
         return 204, b""
 
-    headers = {"badgehub-api-token": token}
+    headers = {"badgehub-api-token": token, "User-Agent": USER_AGENT}
     data = None
     if json_body is not None:
         data = json.dumps(json_body).encode()
@@ -126,7 +133,11 @@ def get_latest_revision(api_base, slug):
     if DRY_RUN:
         print(f"  [dry-run] GET {api_base}/project-latest-revisions/{slug}")
         return None
-    req = urllib.request.Request(f"{api_base}/project-latest-revisions/{slug}", method="GET")
+    req = urllib.request.Request(
+        f"{api_base}/project-latest-revisions/{slug}",
+        headers={"User-Agent": USER_AGENT},
+        method="GET",
+    )
     try:
         with urllib.request.urlopen(req) as resp:
             return json.loads(resp.read())
@@ -141,7 +152,9 @@ def main():
     app_dir = os.environ["BADGEHUB_APP_DIR"]
 
     if not DRY_RUN:
-        ping = urllib.request.Request(f"{api_base}/ping", method="GET")
+        ping = urllib.request.Request(
+            f"{api_base}/ping", headers={"User-Agent": USER_AGENT}, method="GET"
+        )
         try:
             urllib.request.urlopen(ping)
         except (urllib.error.HTTPError, urllib.error.URLError) as error:
