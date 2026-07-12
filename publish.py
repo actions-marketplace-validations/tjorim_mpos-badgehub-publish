@@ -59,11 +59,28 @@ def request(method, url, token, json_body=None, multipart_file=None):
         data = body
 
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    print(f"  -> {method} {url}", file=sys.stderr, flush=True)
     try:
-        with urllib.request.urlopen(req) as resp:
-            return resp.status, resp.read()
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read()
+            print(f"  <- {resp.status}", file=sys.stderr, flush=True)
+            return resp.status, body
     except urllib.error.HTTPError as error:
-        return error.code, error.read()
+        body = error.read()
+        print(f"  <- {error.code} (HTTPError)", file=sys.stderr, flush=True)
+        return error.code, body
+    except Exception as error:
+        # Catch everything here, not just HTTPError -- a connection reset,
+        # an SSL error, or a bare timeout would otherwise propagate as an
+        # exception, and on the actual publish call one of these left zero
+        # trace in the log (not even the outer try/except's traceback:
+        # server-side evidence -- BadgeHub's own published_at timestamp --
+        # showed the request *had* succeeded, so whatever failed did so
+        # between getting the response and this function returning, and
+        # took the diagnostic output down with it). Logging immediately
+        # with flush=True, before any further code runs, is the point.
+        print(f"  <- {type(error).__name__}: {error}", file=sys.stderr, flush=True)
+        return -1, str(error).encode()
 
 
 def quote_path(rel_path):
@@ -123,7 +140,7 @@ def build_metadata(app_dir):
 
 
 def fail(message, status, body):
-    print(f"{message}: HTTP {status} {body!r}", file=sys.stderr)
+    print(f"{message}: HTTP {status} {body!r}", file=sys.stderr, flush=True)
     sys.exit(1)
 
 
@@ -151,9 +168,12 @@ def get_latest_revision(api_base, slug):
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError:
+        return None
+    except Exception as error:
+        print(f"  revision check failed: {type(error).__name__}: {error}", file=sys.stderr, flush=True)
         return None
 
 
@@ -168,9 +188,9 @@ def main():
             f"{api_base}/ping", headers={"User-Agent": USER_AGENT}, method="GET"
         )
         try:
-            urllib.request.urlopen(ping)
-        except (urllib.error.HTTPError, urllib.error.URLError) as error:
-            fail("BadgeHub API unreachable", "n/a", str(error).encode())
+            urllib.request.urlopen(ping, timeout=30)
+        except Exception as error:
+            fail("BadgeHub API unreachable", type(error).__name__, str(error).encode())
 
     previous_revision = get_latest_revision(api_base, slug)
 
@@ -185,10 +205,10 @@ def main():
         )
         if status != 204:
             fail(f"Failed to upload {rel_path}", status, body)
-        print(f"  uploaded {rel_path}")
+        print(f"  uploaded {rel_path}", flush=True)
 
     local_paths = set()
-    print(f"Uploading files from '{app_dir}' to BadgeHub project '{slug}'...")
+    print(f"Uploading files from '{app_dir}' to BadgeHub project '{slug}'...", flush=True)
     for full_path, rel_path in iter_app_files(app_dir):
         local_paths.add(rel_path)
         upload_file(full_path, rel_path)
@@ -216,9 +236,10 @@ def main():
             "this project's uploaded files, so nothing will be installable on "
             "that platform without one.",
             file=sys.stderr,
+            flush=True,
         )
 
-    print("Checking for stale draft files...")
+    print("Checking for stale draft files...", flush=True)
     # "metadata.json" isn't a real file we ship -- BadgeHub creates/maintains
     # it itself as a side effect of the metadata PATCH call below, so it
     # never appears in local_paths and must be excluded here or every run
@@ -230,17 +251,17 @@ def main():
         )
         if status != 204:
             fail(f"Failed to delete stale draft file {stale}", status, body)
-        print(f"  removed stale {stale}")
+        print(f"  removed stale {stale}", flush=True)
 
     metadata = build_metadata(app_dir)
-    print("Setting draft metadata:", json.dumps(metadata, indent=2))
+    print("Setting draft metadata:", json.dumps(metadata, indent=2), flush=True)
     status, body = request(
         "PATCH", f"{api_base}/projects/{slug}/draft/metadata", token, json_body=metadata
     )
     if status != 204:
         fail("Failed to set metadata", status, body)
 
-    print("Publishing draft...")
+    print("Publishing draft...", flush=True)
     status, body = request("PATCH", f"{api_base}/projects/{slug}/publish", token)
     if status != 204:
         fail("Failed to publish", status, body)
@@ -256,9 +277,9 @@ def main():
                 "n/a",
                 b"",
             )
-        print(f"Confirmed: revision is now {new_revision} (was {previous_revision}).")
+        print(f"Confirmed: revision is now {new_revision} (was {previous_revision}).", flush=True)
 
-    print(f"Published '{slug}' version {metadata['version']} to BadgeHub.")
+    print(f"Published '{slug}' version {metadata['version']} to BadgeHub.", flush=True)
 
 
 if __name__ == "__main__":
