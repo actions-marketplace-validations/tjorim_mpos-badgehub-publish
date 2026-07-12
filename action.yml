@@ -1,8 +1,5 @@
 name: 'Publish to BadgeHub'
-description: >
-  Uploads a MicroPythonOS app directory to BadgeHub.eu and publishes it as a
-  new release. Reads name/description/version/entrypoint from the app's own
-  MANIFEST.JSON, so only BadgeHub-specific extras need to be supplied here.
+description: 'Publishes a MicroPythonOS app to BadgeHub.eu: uploads files, sets metadata, and publishes a new release.'
 inputs:
   slug:
     description: 'BadgeHub project slug (create the project on badgehub.eu first)'
